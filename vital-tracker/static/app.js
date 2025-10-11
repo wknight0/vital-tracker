@@ -1,12 +1,12 @@
-// Minimal frontend script for Vital Tracker
+// Frontend script for Vital Tracker
 
 (async function(){
   let bpChart = null, pulseChart = null, tempChart = null;
   let tableState = { page: 1, pageSize: 10, sortKey: 'timestamp_nanos', sortDir: 'desc' };
   let lastEntries = [];
 
-  let video = null; // will be queried when DOM is ready
-  // thumbnails and hidden temporary canvas used for captures
+  let video = null; 
+  // Thumbnails and hidden temporary canvas used for captures
   // note: thumbnail and button elements are queried later (after DOM ready) to avoid null refs
   const tempCanvas = document.createElement('canvas'); tempCanvas.width = 320; tempCanvas.height = 240; const tempCtx = tempCanvas.getContext('2d');
   let captureStep = 0; // 0=front,1=left,2=right,3=done
@@ -41,9 +41,32 @@
         for(const e of pageItems){
           const tr = document.createElement('tr');
           const date = tsToDate(e.timestamp_nanos);
-          tr.innerHTML = `<td>${date?date.toLocaleString():''}</td><td>${e.sys}</td><td>${e.dia}</td><td>${e.pulse}</td><td>${e.temp_c}</td><td><a target="_blank" href="${e.path}">photo</a></td>`;
+          // Derive base id from photo path to avoid JS Number precision issues on timestamp_nanos
+          const tsBase = (()=>{
+            try{
+              const fname = (e.path||'').split('/').pop()||'';
+              return fname.replace(/\.jpg$/i,'');
+            }catch(_){ return String(e.timestamp_nanos||''); }
+          })();
+          tr.innerHTML = `<td>${date?date.toLocaleString():''}</td><td>${e.sys}</td><td>${e.dia}</td><td>${e.pulse}</td><td>${e.temp_c}</td><td><a target="_blank" href="${e.path}">photo</a></td><td><button class="del-btn" data-ts="${tsBase}">Delete</button></td>`;
           tbody.appendChild(tr);
         }
+        // Attach delete handlers
+        tbody.querySelectorAll('button.del-btn').forEach(btn=>{
+          btn.addEventListener('click', async (ev)=>{
+            const ts = ev.currentTarget.getAttribute('data-ts');
+            if(!ts) return;
+            if(!confirm('Delete this entry?')) return;
+            try{
+              const r = await fetch(`/entry/${encodeURIComponent(ts)}`, { method:'DELETE' });
+              if(r.ok){
+                await loadEntries();
+              } else {
+                alert('Delete failed: '+ r.status);
+              }
+            } catch(e){ alert('Network error: '+ e); }
+          });
+        });
       }
 
       // Photo Gallery
@@ -56,18 +79,86 @@
         }
       }
 
-      // Charts (Graphs)
+      // Charts (Graphs) with view modes
       if(document.getElementById('bpChart')){
-        const asc = parsed.slice().sort((a,b)=> a.timestamp_nanos - b.timestamp_nanos);
-        const labels = asc.map(x => tsToDate(x.timestamp_nanos) ? tsToDate(x.timestamp_nanos).toLocaleString() : '');
-        const sysData = asc.map(x=>x.sys), diaData = asc.map(x=>x.dia), pulseData = asc.map(x=>x.pulse), tempData = asc.map(x=>x.temp_c);
+        const view = document.getElementById('graph_view_select')?.value || 'full';
+
+        function toMs(nanos){ const d = tsToDate(nanos); return d? d.getTime(): 0; }
+        function fmt(dt){ return dt? dt.toLocaleString(): ''; }
+        function groupWeekly(items){
+          const WEEK = 7*24*60*60*1000;
+          const buckets = new Map();
+          for(const it of items){
+            const ms = toMs(it.timestamp_nanos);
+            const start = Math.floor(ms / WEEK) * WEEK; // simple epoch-based week bucket
+            if(!buckets.has(start)) buckets.set(start, []);
+            buckets.get(start).push(it);
+          }
+          const keys = Array.from(buckets.keys()).sort((a,b)=> a-b);
+          const labels = keys.map(k=> new Date(k));
+          const agg = keys.map(k=>{
+            const arr = buckets.get(k);
+            const avg = (sel)=> arr.length? (arr.reduce((s,x)=> s + Number(sel(x)||0),0) / arr.length) : 0;
+            return { sys: avg(x=>x.sys), dia: avg(x=>x.dia), pulse: avg(x=>x.pulse), temp_c: avg(x=>x.temp_c) };
+          });
+          return { labels: labels.map(fmt), sys: agg.map(x=>x.sys), dia: agg.map(x=>x.dia), pulse: agg.map(x=>x.pulse), temp_c: agg.map(x=>x.temp_c) };
+        }
+
+        // Base sorted ascending
+        let asc = parsed.slice().sort((a,b)=> a.timestamp_nanos - b.timestamp_nanos);
+        let labels, sysData, diaData, pulseData, tempData, extraDatasets = [];
+
+        if(view === '30d'){
+          const cutoff = Date.now() - 30*24*60*60*1000;
+          asc = asc.filter(e => toMs(e.timestamp_nanos) >= cutoff);
+          labels = asc.map(x=> fmt(tsToDate(x.timestamp_nanos)));
+          sysData = asc.map(x=>x.sys); diaData = asc.map(x=>x.dia); pulseData = asc.map(x=>x.pulse); tempData = asc.map(x=>x.temp_c);
+        } else if(view === '7d_weekly'){
+          const g = groupWeekly(asc);
+          labels = g.labels; sysData = g.sys; diaData = g.dia; pulseData = g.pulse; tempData = g.temp_c;
+        } else if(view === 'avg_compare'){
+          labels = asc.map(x=> fmt(tsToDate(x.timestamp_nanos)));
+          sysData = asc.map(x=>x.sys); diaData = asc.map(x=>x.dia); pulseData = asc.map(x=>x.pulse); tempData = asc.map(x=>x.temp_c);
+          const mean = arr => arr.length? (arr.reduce((s,v)=> s + Number(v||0),0)/arr.length):0;
+          const sysAvg = mean(sysData), diaAvg = mean(diaData), pulseAvg = mean(pulseData), tempAvg = mean(tempData);
+          const line = (v)=> labels.map(()=> v);
+          extraDatasets = [
+            { label:'SYS avg', data: line(sysAvg), borderColor:'rgba(220,20,60,.5)', borderDash:[6,4], fill:false },
+            { label:'DIA avg', data: line(diaAvg), borderColor:'rgba(30,144,255,.5)', borderDash:[6,4], fill:false }
+          ];
+          // For pulse and temp charts we'll add their own avg lines separately
+        } else {
+          labels = asc.map(x=> fmt(tsToDate(x.timestamp_nanos)));
+          sysData = asc.map(x=>x.sys); diaData = asc.map(x=>x.dia); pulseData = asc.map(x=>x.pulse); tempData = asc.map(x=>x.temp_c);
+        }
+
         if(bpChart){ bpChart.destroy(); bpChart = null; }
         if(pulseChart){ pulseChart.destroy(); pulseChart = null; }
         if(tempChart){ tempChart.destroy(); tempChart = null; }
+
         const bpCtx = document.getElementById('bpChart').getContext('2d');
-        bpChart = new Chart(bpCtx, { type:'line', data:{ labels, datasets:[ { label:'SYS', data: sysData, borderColor:'rgb(220,20,60)', fill:false }, { label:'DIA', data: diaData, borderColor:'rgb(30,144,255)', fill:false } ] }, options:{ responsive:true } });
-        const pCtx = document.getElementById('pulseChart').getContext('2d'); pulseChart = new Chart(pCtx, { type:'line', data:{ labels, datasets:[ { label:'Pulse', data: pulseData, borderColor:'rgb(34,139,34)', fill:false } ] }, options:{ responsive:true } });
-        const tCtx = document.getElementById('tempChart').getContext('2d'); tempChart = new Chart(tCtx, { type:'line', data:{ labels, datasets:[ { label:'Temp (C)', data: tempData, borderColor:'rgb(255,140,0)', fill:false } ] }, options:{ responsive:true } });
+        const bpDatasets = [
+          { label:'SYS', data: sysData, borderColor:'rgb(220,20,60)', fill:false },
+          { label:'DIA', data: diaData, borderColor:'rgb(30,144,255)', fill:false },
+          ...extraDatasets
+        ];
+        bpChart = new Chart(bpCtx, { type:'line', data:{ labels, datasets: bpDatasets }, options:{ responsive:true } });
+
+        const pCtx = document.getElementById('pulseChart').getContext('2d');
+        let pulseDatasets = [ { label:'Pulse', data: pulseData, borderColor:'rgb(34,139,34)', fill:false } ];
+        if(view === 'avg_compare'){
+          const mean = arr => arr.length? (arr.reduce((s,v)=> s + Number(v||0),0)/arr.length):0;
+          pulseDatasets.push({ label:'Pulse avg', data: labels.map(()=> mean(pulseData)), borderColor:'rgba(34,139,34,.5)', borderDash:[6,4], fill:false });
+        }
+        pulseChart = new Chart(pCtx, { type:'line', data:{ labels, datasets: pulseDatasets }, options:{ responsive:true } });
+
+        const tCtx = document.getElementById('tempChart').getContext('2d');
+        let tempDatasets = [ { label:'Temp (C)', data: tempData, borderColor:'rgb(255,140,0)', fill:false } ];
+        if(view === 'avg_compare'){
+          const mean = arr => arr.length? (arr.reduce((s,v)=> s + Number(v||0),0)/arr.length):0;
+          tempDatasets.push({ label:'Temp avg', data: labels.map(()=> mean(tempData)), borderColor:'rgba(255,140,0,.5)', borderDash:[6,4], fill:false });
+        }
+        tempChart = new Chart(tCtx, { type:'line', data:{ labels, datasets: tempDatasets }, options:{ responsive:true } });
       }
 
     } catch(err){
@@ -109,6 +200,21 @@
     const graphSelect = document.getElementById('graph_view_select');
     if(graphSelect) graphSelect.addEventListener('change', ()=> loadEntries());
 
+    // Graph tabs - show one chart at a time
+    const tabs = document.querySelectorAll('.graph-tab');
+    const bpCard = document.getElementById('bpChart')?.parentElement;
+    const pulseCard = document.getElementById('pulseChart')?.parentElement;
+    const tempCard = document.getElementById('tempChart')?.parentElement;
+    function showTab(tab){
+      if(!bpCard || !pulseCard || !tempCard) return;
+      bpCard.style.display = (tab==='bp')? 'block':'none';
+      pulseCard.style.display = (tab==='pulse')? 'block':'none';
+      tempCard.style.display = (tab==='temp')? 'block':'none';
+      tabs.forEach(t=> t.classList.toggle('active', t.getAttribute('data-tab')===tab));
+    }
+    tabs.forEach(t=> t.addEventListener('click', ()=> showTab(t.getAttribute('data-tab'))));
+    if(tabs.length){ showTab('bp'); }
+
     // Dashboard nav fallback (legacy pages)
     document.getElementById('view_graphs')?.addEventListener('click', ()=> location.href='/static/dashboard/graphs.html');
     document.getElementById('view_table')?.addEventListener('click', ()=> location.href='/static/dashboard/table.html');
@@ -141,7 +247,6 @@
     else if(captureStep===2) btn.textContent = 'Capture Right';
     else btn.textContent = 'Submit Entry';
   }
-  // Note: capCycle button listener is attached when the binder runs (DOM ready)
 
   // Submit using captured blobs
   async function doSubmitWithCaptured(){
@@ -150,7 +255,23 @@
     if(capturedBlobs.front) fd.append('photo_front', new File([capturedBlobs.front], 'front.png', { type:'image/png' }));
     if(capturedBlobs.left) fd.append('photo_left', new File([capturedBlobs.left], 'left.png', { type:'image/png' }));
     if(capturedBlobs.right) fd.append('photo_right', new File([capturedBlobs.right], 'right.png', { type:'image/png' }));
-    try{ const res = await fetch('/entry',{ method:'POST', body: fd }); if(res.ok){ status && (status.textContent='Saved'); setTimeout(()=> location.href='/',300); } else { status && (status.textContent = 'Error: '+ await res.text()); } } catch(e){ status && (status.textContent = 'Network error: '+e); }
+    try{
+      const res = await fetch('/entry',{ method:'POST', body: fd });
+      if(res.ok){
+        status && (status.textContent='Saved');
+        try{ document.title = 'VITAL_OK_CLOSE'; }catch(_){ }
+        // Attempt to close the window if this tab was opened by our hotkey launcher
+        setTimeout(()=>{
+          try{
+            if(window.close){ window.close(); }
+          }catch(_){ }
+          // Fallback: navigate away if close was blocked
+          try{ location.href = '/'; }catch(_){}
+        }, 200);
+      } else {
+        status && (status.textContent = 'Error: '+ await res.text());
+      }
+    } catch(e){ status && (status.textContent = 'Network error: '+e); }
   }
 
   // Submit (legacy submit button) - also supports direct submit without using cycle button
@@ -178,9 +299,14 @@
       const res = await fetch('/entry',{ method:'POST', body: fd });
       if(res.ok){
         status && (status.textContent='Saved');
-        // reset capture state
+        try{ document.title = 'VITAL_OK_CLOSE'; }catch(_){ }
+        
         captureStep = 0; capturedBlobs = { front:null,left:null,right:null }; const statusEl = document.getElementById('cap_status'); if(statusEl) statusEl.textContent = '0 / 3 captured'; const btn = document.getElementById('cap_cycle'); if(btn) { btn.disabled = false; updateCaptureButton(); }
-        setTimeout(()=> location.href='/',300);
+
+        setTimeout(()=>{
+          try{ if(window.close){ window.close(); } }catch(_){}
+          try{ location.href='/'; }catch(_){}
+        }, 200);
       } else { status && (status.textContent = 'Error: '+ await res.text()); }
     } catch(e){ status && (status.textContent = 'Network error: '+e); }
   }
@@ -215,7 +341,7 @@
               else if(captureStep===1) capturedBlobs.left = blob;
               else if(captureStep===2) capturedBlobs.right = blob;
               captureStep++;
-              // update status text and button label
+
               const statusEl = document.getElementById('cap_status'); if(statusEl) statusEl.textContent = `${captureStep} / 3 captured`;
               updateCaptureButton();
               if(captureStep>=3){ btn.disabled = true; }
@@ -223,7 +349,6 @@
               alert('Camera not available');
             }
           } else {
-            // no-op when captured; submission is via the Submit button
           }
         });
       }

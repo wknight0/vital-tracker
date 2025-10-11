@@ -1,0 +1,157 @@
+/* Global dark theme */
+:root{
+    --bg:#0e0f12;
+    --panel:#17191f;
+    --panel-2:#1e222b;
+    --text:#e6eef8;
+    --muted:#a6b0bf;
+    --accent:#4ea1ff;
+    --accent-2:#7dd3fc;
+    --danger:#ff5c74;
+    --ok:#22c55e;
+    --border:#2a2f3a;
+    --shadow:0 6px 18px rgba(0,0,0,.35);
+}
+
+html, body{
+    background: var(--bg) !important;
+    color: var(--text);
+    font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Arial, sans-serif;
+    margin:0; padding:0;
+}
+
+/* Container & sections */
+body > nav, body > section, #dashboard_container, footer{
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 12px 16px;
+}
+
+/* Nav */
+nav{
+    display:flex; gap:12px; align-items:center; flex-wrap:wrap;
+    background: var(--panel);
+    border-bottom:1px solid var(--border);
+}
+nav a{ color: var(--text); text-decoration:none; opacity:.9; }
+nav a:hover{ color: var(--accent); opacity:1; }
+
+/* Headings */
+h1, h2, h3{ margin: 8px 0 12px; font-weight:600; }
+
+/* Forms */
+input, select, button{
+    background: var(--panel-2);
+    color: var(--text);
+    border:1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+}
+label{ margin-right:10px; }
+button{
+    cursor:pointer; transition:.15s transform ease, .15s background ease;
+}
+button:hover{ transform: translateY(-1px); background:#232733; }
+button:active{ transform: translateY(0); }
+
+#submit{ background: #1f2937; border-color:#2d3748; }
+#submit:hover{ background:#293241; }
+
+#status{ margin-left:8px; color: var(--muted); }
+
+/* Video */
+video{ display:block; margin-bottom:8px; border:1px solid var(--border) !important; border-radius:6px; }
+
+/* Cards & grids */
+.chart-card{
+    background: var(--panel);
+    border:1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px;
+    box-shadow: var(--shadow);
+}
+.charts{ align-items:stretch; }
+
+/* Graph tabs */
+.graph-tabs{ margin-left:auto; }
+.graph-tab{
+    background: var(--panel-2);
+    border:1px solid var(--border);
+    color: var(--text);
+    padding: 6px 10px;
+    border-radius: 999px;
+}
+.graph-tab.active{ background: #243044; border-color:#31415b; color: var(--accent-2); }
+
+/* Table */
+table{ width:100%; border-collapse: collapse; }
+thead th{ text-align:left; padding:8px; background: #151820; border-bottom:1px solid var(--border); }
+tbody td{ padding:8px; border-bottom:1px solid var(--border); }
+tbody tr:hover{ background:#161a22; }
+
+/* Delete button */
+button.del-btn{ background:#2a2f3a; border-color:#3a4150; }
+button.del-btn:hover{ background:#322f35; border-color:#4b2b37; color:#ffd7de; }
+button.del-btn:active{ background:#3a3340; }
+
+/* Photos gallery */
+#photos_gallery{ display:grid; grid-template-columns: repeat(auto-fill,minmax(180px,1fr)); gap:12px; }
+#photos_gallery img{ width:100%; height:auto; border-radius:8px; border:1px solid var(--border); box-shadow: var(--shadow); }
+#photos_gallery > div{ background: var(--panel); border:1px solid var(--border); border-radius:10px; padding:8px; }
+
+/* Footer */
+footer{ color: var(--muted); border-top:1px solid var(--border); background: var(--panel); }
+
+/* Quick Entry layout */
+#quick .inputs-grid{
+    display:grid;
+    grid-template-columns: repeat(2, minmax(220px, 1fr));
+    gap:12px 20px;
+    margin:10px auto 18px;
+    max-width:700px;
+}
+#quick .inputs-grid label{
+    display:flex;
+    flex-direction:column;
+    gap:6px;
+    font-weight:600;
+}
+#quick .inputs-grid input[type="number"]{ width:100%; }
+
+#quick .media{
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    gap:10px;
+    margin:8px auto 14px;
+}
+#quick video#video{
+    height:240px; /* enforce height only */
+    width:auto;   /* let width follow aspect ratio */
+    max-width:100%;
+    background:#101218;
+    border:1px solid var(--border);
+    border-radius:8px;
+}
+#quick .capture-controls{
+    display:flex; flex-direction:column; align-items:center; gap:6px;
+}
+#quick .capture-controls .hint{ font-size:12px; color: var(--muted); }
+
+#quick .actions{
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; margin-top:10px;
+}
+
+/* Align status under the button for centered look on Quick Entry */
+#quick #status{ margin-left:0; margin-top:6px; }
+
+/* Make capture and submit buttons bigger and same size */
+#quick #cap_cycle,
+#quick #submit{
+    width:240px;
+    padding:12px 16px;
+    font-size:16px;
+    border-radius:10px;
+}
+

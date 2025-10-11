@@ -1,4 +1,4 @@
-use axum::{routing::{post, get, get_service}, Router, extract::Multipart, response::IntoResponse, http::StatusCode, Json};
+use axum::{routing::{post, get, get_service, delete}, Router, extract::{Multipart, Path}, response::IntoResponse, http::StatusCode, Json};
 use std::net::SocketAddr;
 use chrono::Utc;
 use tokio::fs;
@@ -7,17 +7,23 @@ use crate::db::influx::InfluxClient;
 use image::io::Reader as ImageReader;
 use image::DynamicImage;
 use tower_http::services::ServeDir;
+use crate::paths;
 use serde::{Serialize, Deserialize};
+use std::sync::atomic::{AtomicBool, Ordering};
+
+// If Influx is unreachable, we flip this flag to stop further background attempts/logs
+static INFLUX_DISABLED_RUNTIME: AtomicBool = AtomicBool::new(false);
+static INFLUX_LOGGED_ONCE: AtomicBool = AtomicBool::new(false);
 
 #[derive(Serialize, Deserialize)]
 struct Entry { path: String, sys: i64, dia: i64, pulse: i64, temp_c: f64, timestamp_nanos: i128 }
 
 pub async fn run_server() -> Result<()> {
-    let photos_service = get_service(ServeDir::new("data/photos")).handle_error(|err: std::io::Error| async move {
+    let photos_service = get_service(ServeDir::new(paths::PHOTOS_DIR)).handle_error(|err: std::io::Error| async move {
         (StatusCode::INTERNAL_SERVER_ERROR, format!("Unhandled internal error: {}", err))
     });
 
-    // serve the static/ directory so files like /app.js and /dashboard/*.html are available
+    // Serve the static/ directory so files like /app.js and /dashboard/*.html are available
     let static_service = get_service(ServeDir::new("static")).handle_error(|err: std::io::Error| async move {
         (StatusCode::INTERNAL_SERVER_ERROR, format!("Unhandled internal error: {}", err))
     });
@@ -26,6 +32,7 @@ pub async fn run_server() -> Result<()> {
         .route("/", get(root))
         .nest_service("/static", static_service)
         .route("/entry", post(handle_entry))
+        .route("/entry/:ts", delete(delete_entry))
         .route("/influx_last", get(influx_last))
         .route("/entries", get(list_entries))
         .nest_service("/photos", photos_service);
@@ -96,24 +103,41 @@ async fn handle_entry(mut multipart: Multipart) -> impl IntoResponse {
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("image error: {}", e)),
     };
 
-    let cp = combined_path.clone();
-    let s = sys.unwrap(); let d = dia.unwrap(); let p = pulse.unwrap(); let t = temp.unwrap();
-    tokio::spawn(async move {
-        if let Ok(client) = InfluxClient::from_env() {
-            if let Err(e) = client.write_entry(s, d, p, t, &cp).await {
-                eprintln!("Influx write failed (background): {}", e);
+    // Optionally write to Influx in the background (can be disabled via env or runtime circuit-breaker)
+    let disable_influx_env = std::env::var("VITAL_DISABLE_INFLUX").ok().map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false);
+    let disable_influx_runtime = INFLUX_DISABLED_RUNTIME.load(Ordering::Relaxed);
+    if !disable_influx_env && !disable_influx_runtime {
+        let cp = combined_path.clone();
+        let s = sys.unwrap(); let d = dia.unwrap(); let p = pulse.unwrap(); let t = temp.unwrap();
+        tokio::spawn(async move {
+            if let Ok(client) = InfluxClient::from_env() {
+                if let Err(e) = client.write_entry(s, d, p, t, &cp).await {
+                    let msg = e.to_string();
+                    // Detect connection errors and disable future attempts for this session
+                    if msg.contains("No connection could be made") || msg.contains("error trying to connect") {
+                        INFLUX_DISABLED_RUNTIME.store(true, Ordering::Relaxed);
+                        if !INFLUX_LOGGED_ONCE.swap(true, Ordering::Relaxed) {
+                            eprintln!(
+                                "Influx unreachable; disabling writes for this session. Set VITAL_DISABLE_INFLUX=1 to hide this. ({})",
+                                msg
+                            );
+                        }
+                    } else {
+                        eprintln!("Influx write failed (background): {}", msg);
+                    }
+                }
+            } else {
+                eprintln!("Could not create Influx client (background)");
             }
-        } else {
-            eprintln!("Could not create Influx client (background)");
-        }
-    });
+        });
+    }
 
     (StatusCode::OK, "ok".to_string())
 }
 
 async fn list_entries() -> impl IntoResponse {
     let mut out: Vec<Entry> = Vec::new();
-    if let Ok(mut files) = fs::read_dir("data/photos").await {
+    if let Ok(mut files) = fs::read_dir(paths::PHOTOS_DIR).await {
         while let Ok(Some(entry)) = files.next_entry().await {
             if let Ok(md) = entry.metadata().await {
                 if md.is_file() {
@@ -121,8 +145,14 @@ async fn list_entries() -> impl IntoResponse {
                         // look for .json metadata file matching the image name
                         if fname.ends_with(".jpg") {
                             let base = fname.trim_end_matches(".jpg");
-                            let meta_path = format!("data/photos/{}.json", base);
-                            if let Ok(j) = fs::read_to_string(&meta_path).await {
+                            let meta_path_new = paths::json_meta_path(base);
+                            let meta_path_legacy = format!("{}/{}.json", paths::PHOTOS_DIR, base);
+                            // Try new location first, then legacy next-to-photo JSON
+                            let meta_json_res = match fs::read_to_string(&meta_path_new).await {
+                                Ok(j) => Ok(j),
+                                Err(_) => fs::read_to_string(&meta_path_legacy).await,
+                            };
+                            if let Ok(j) = meta_json_res {
                                 if let Ok(entry_meta) = serde_json::from_str::<Entry>(&j) {
                                     out.push(entry_meta);
                                 } else {
@@ -183,7 +213,7 @@ async fn influx_last() -> impl IntoResponse {
 }
 
 async fn combine_and_save_images(front: Option<Vec<u8>>, left: Option<Vec<u8>>, right: Option<Vec<u8>>, sys: i64, dia: i64, pulse: i64, temp_c: f64) -> Result<String> {
-    let photos_dir = "data/photos";
+    let photos_dir = paths::PHOTOS_DIR;
     fs::create_dir_all(photos_dir).await?;
 
     async fn decode_image(bytes: Vec<u8>) -> Result<DynamicImage> {
@@ -228,11 +258,33 @@ async fn combine_and_save_images(front: Option<Vec<u8>>, left: Option<Vec<u8>>, 
     let out_path = format!("{}/{}", photos_dir, filename);
     imgbuf.save(&out_path)?;
 
-    // write metadata JSON next to the image
+    // Write metadata JSON under data/json (new layout)
     let meta = Entry { path: format!("/photos/{}", filename), sys: sys, dia: dia, pulse: pulse, temp_c: temp_c, timestamp_nanos: timestamp };
-    let meta_path = format!("{}/{}.json", photos_dir, timestamp);
+    let meta_path = paths::json_meta_path(&timestamp.to_string());
     let meta_json = serde_json::to_string(&meta)?;
     fs::write(&meta_path, meta_json).await?;
 
     Ok(out_path)
+}
+
+async fn delete_entry(Path(ts): Path<String>) -> impl IntoResponse {
+    // Derive file paths from timestamp base
+    let photo = format!("{}/{}.jpg", paths::PHOTOS_DIR, ts);
+    let meta_new = paths::json_meta_path(&ts);
+    let meta_legacy = format!("{}/{}.json", paths::PHOTOS_DIR, ts);
+
+    // Helper to ignore NotFound errors
+    async fn rm(p: &str) {
+        if let Err(e) = fs::remove_file(p).await {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                eprintln!("delete failed for {}: {}", p, e);
+            }
+        }
+    }
+
+    rm(&meta_new).await;
+    rm(&meta_legacy).await;
+    rm(&photo).await;
+
+    StatusCode::NO_CONTENT
 }
