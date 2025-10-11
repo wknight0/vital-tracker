@@ -30,6 +30,7 @@ pub async fn run_server() -> Result<()> {
 
     let app = Router::new()
         .route("/", get(root))
+        .route("/health", get(health))
         .nest_service("/static", static_service)
         .route("/entry", post(handle_entry))
         .route("/entry/:ts", delete(delete_entry))
@@ -46,6 +47,10 @@ pub async fn run_server() -> Result<()> {
 async fn root() -> impl IntoResponse {
     let html = include_str!("../static/index.html");
     (axum::http::StatusCode::OK, axum::response::Html(html))
+}
+
+async fn health() -> impl IntoResponse {
+    (StatusCode::OK, "ok")
 }
 
 async fn handle_entry(mut multipart: Multipart) -> impl IntoResponse {

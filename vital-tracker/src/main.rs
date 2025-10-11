@@ -8,6 +8,9 @@ async fn main() -> anyhow::Result<()> {
     let _ = dotenvy::dotenv();
     // Ensure data directories exist
     paths::ensure_data_dirs().await?;
-    server::run_server().await?;
+    if let Err(e) = server::run_server().await {
+        eprintln!("Server failed to start: {:#}", e);
+        std::process::exit(1);
+    }
     Ok(())
 }
