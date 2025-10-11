@@ -1,0 +1,130 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Vital Tracker</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  </head>
+  <body>
+    <nav style="margin-bottom:12px;">
+      <a href="#" data-view="quick">Home</a> ·
+      <a href="#" data-view="table">Table</a> ·
+      <a href="#" data-view="graphs">Graphs</a> ·
+      <a href="#" data-view="photos">Photos</a>
+    </nav>
+
+    <hr/>
+    <section id="quick">
+      <h1>Quick Entry</h1>
+      <div class="inputs-grid">
+        <label>SYS
+          <input id="sys" type="number" />
+        </label>
+        <label>DIA
+          <input id="dia" type="number" />
+        </label>
+        <label>Pulse
+          <input id="pulse" type="number" />
+        </label>
+        <label>Temp (C)
+          <input id="temp" type="number" step="0.1" />
+        </label>
+      </div>
+
+      <div class="media">
+        <video id="video" autoplay playsinline></video>
+        <div class="capture-controls">
+          <button id="cap_cycle">Capture Front</button>
+          <div class="hint"><span id="cap_status">0 / 3 captured</span></div>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button id="submit">Save Entry</button>
+        <span id="status"></span>
+      </div>
+    </section>
+
+    <div id="dashboard_container">
+      <div id="view-table" class="view-section" style="display:none">
+        <h1>Dashboard — Table</h1>
+        <div id="table_controls" style="margin-bottom:6px;">
+          <button id="tbl_prev">Prev</button>
+          <span id="tbl_page">1</span>
+          <button id="tbl_next">Next</button>
+          <label style="margin-left:12px">Page size:
+            <select id="tbl_pagesize"><option>10</option><option>25</option><option>50</option></select>
+          </label>
+          <span style="margin-left:12px"></span>
+          <button id="export_page">Export page CSV</button>
+          <button id="export_all">Export all CSV</button>
+          <button id="refresh_entries">Refresh</button>
+        </div>
+
+        <table id="entries_table">
+          <thead>
+            <tr>
+              <th data-key="timestamp_nanos">Timestamp</th>
+              <th data-key="sys">SYS</th>
+              <th data-key="dia">DIA</th>
+              <th data-key="pulse">Pulse</th>
+              <th data-key="temp_c">Temp (C)</th>
+              <th>Photo</th>
+              <th>Delete</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <div id="view-graphs" class="view-section" style="display:none">
+        <h1>Dashboard — Graphs</h1>
+        <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+          <label>View: <select id="graph_view_select"><option value="full">Full</option><option value="30d">Last 30 days</option><option value="7d_weekly">Weekly Avg</option><option value="avg_compare">Avg Compare</option></select></label>
+          <div class="graph-tabs" style="display:flex;gap:8px;">
+            <button type="button" class="graph-tab" data-tab="bp">Blood Pressure</button>
+            <button type="button" class="graph-tab" data-tab="pulse">Heart Rate</button>
+            <button type="button" class="graph-tab" data-tab="temp">Temperature</button>
+          </div>
+        </div>
+        <div class="charts" style="display:flex;gap:20px;flex-wrap:wrap;margin-top:12px;">
+          <div class="chart-card" style="flex:1 1 300px"><canvas id="bpChart"></canvas></div>
+          <div class="chart-card" style="flex:1 1 300px"><canvas id="pulseChart"></canvas></div>
+          <div class="chart-card" style="flex:1 1 300px"><canvas id="tempChart"></canvas></div>
+        </div>
+      </div>
+
+      <div id="view-photos" class="view-section" style="display:none">
+        <h1>Dashboard — Photos</h1>
+        <div id="photos_gallery"></div>
+      </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+    <script>
+      document.addEventListener('DOMContentLoaded', ()=>{
+        const links = document.querySelectorAll('nav a[data-view]');
+        function showView(v){
+          document.querySelectorAll('.view-section').forEach(el=> el.style.display = 'none');
+          if(v === 'quick'){
+            document.getElementById('quick').style.display = 'block';
+          } else {
+            document.getElementById('quick').style.display = 'none';
+            const el = document.getElementById('view-'+v);
+            if(el) el.style.display = 'block';
+          }
+          try{ if(window.vital_loadEntries) window.vital_loadEntries(); }catch(e){}
+        }
+        links.forEach(a=> a.addEventListener('click', (e)=>{ e.preventDefault(); const v = a.getAttribute('data-view'); showView(v); }));
+
+        // Bind controls when all elements are present
+        try{ if(window.vital_bindControls) window.vital_bindControls(); }catch(e){ console.warn('bind failed', e); }
+        try{ if(window.vital_loadEntries) window.vital_loadEntries(); }catch(e){ console.warn('loadEntries failed', e); }
+
+        // Always default to Quick Entry on load; do not persist last view
+        showView('quick');
+      });
+    </script>
+  </body>
+</html>

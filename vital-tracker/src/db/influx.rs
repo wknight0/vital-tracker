@@ -27,8 +27,18 @@ impl InfluxClient {
         })
     }
 
+    pub fn org(&self) -> Option<&String> {
+        self.org.as_ref()
+    }
+
+    pub fn bucket(&self) -> &str {
+        &self.bucket
+    }
+
+    #[allow(dead_code)]
     pub async fn write_point(&self, measurement: &str, metric: &str, value: f64) -> Result<()> {
-        let timestamp = Utc::now().timestamp_nanos();
+        let now = Utc::now();
+        let timestamp = now.timestamp_nanos_opt().unwrap_or(now.timestamp() * 1_000_000_000);
         let line = format!("{measurement},metric={metric} value={value} {timestamp}",
             measurement = measurement,
             metric = metric,
@@ -61,7 +71,8 @@ impl InfluxClient {
 
     /// Writes full vital entry storing numeric fields and photo path
     pub async fn write_entry(&self, sys: i64, dia: i64, pulse: i64, temp_c: f64, photo_path: &str) -> Result<()> {
-        let timestamp = Utc::now().timestamp_nanos();
+        let now = Utc::now();
+        let timestamp = now.timestamp_nanos_opt().unwrap_or(now.timestamp() * 1_000_000_000);
 
         let escaped = photo_path.replace('"', "\\\"");
         let line = format!(
@@ -87,5 +98,39 @@ impl InfluxClient {
             return Err(anyhow!("Influx write failed: {} - {}", status, body));
         }
         Ok(())
+    }
+
+    /// Simple compatibility query using InfluxQL returning csv text
+    pub async fn query_influxql(&self, q: &str) -> Result<String> {
+        if self.org.is_some() {
+            let url = format!("{}/api/v2/query?org={}", self.url, self.org.as_ref().unwrap());
+            let mut req = self.client.post(&url)
+                .header("Content-Type", "application/vnd.flux")
+                .header("Accept", "application/csv")
+                .body(q.to_string());
+            if let Some(token) = &self.token {
+                req = req.header("Authorization", format!("Token {}", token));
+            }
+            let resp = req.send().await.map_err(|e| anyhow!(e))?;
+            let status = resp.status();
+            let body = resp.text().await.map_err(|e| anyhow!(e))?;
+            if !status.is_success() {
+                return Err(anyhow!("Influx query failed: {} - {}", status, body));
+            }
+            return Ok(body);
+        } else {
+            let url = format!("{}/query?db={}", self.url, self.bucket);
+            let mut req = self.client.post(&url).form(&[("q", q)]);
+            if let Some(token) = &self.token {
+                req = req.header("Authorization", format!("Token {}", token));
+            }
+            let resp = req.send().await.map_err(|e| anyhow!(e))?;
+            let status = resp.status();
+            let body = resp.text().await.map_err(|e| anyhow!(e))?;
+            if !status.is_success() {
+                return Err(anyhow!("Influx query failed: {} - {}", status, body));
+            }
+            return Ok(body);
+        }
     }
 }
