@@ -62,6 +62,7 @@ async fn handle_entry(mut multipart: Multipart) -> impl IntoResponse {
     let mut front: Option<Vec<u8>> = None;
     let mut left: Option<Vec<u8>> = None;
     let mut right: Option<Vec<u8>> = None;
+    let mut neck: Option<Vec<u8>> = None;
 
     while let Some(field) = multipart.next_field().await.unwrap_or(None) {
         let name = field.name().map(|s| s.to_string()).unwrap_or_default();
@@ -95,6 +96,9 @@ async fn handle_entry(mut multipart: Multipart) -> impl IntoResponse {
             "photo_right" => {
                 right = field.bytes().await.ok().map(|b| b.to_vec());
             }
+            "photo_neck" => {
+                neck = field.bytes().await.ok().map(|b| b.to_vec());
+            }
             _ => {}
         }
     }
@@ -103,7 +107,7 @@ async fn handle_entry(mut multipart: Multipart) -> impl IntoResponse {
         return (StatusCode::BAD_REQUEST, "Missing numeric fields".to_string());
     }
 
-    let combined_path = match combine_and_save_images(front, left, right, sys.unwrap(), dia.unwrap(), pulse.unwrap(), temp.unwrap()).await {
+    let combined_path = match combine_and_save_images(front, left, right, neck, sys.unwrap(), dia.unwrap(), pulse.unwrap(), temp.unwrap()).await {
         Ok(p) => p,
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("image error: {}", e)),
     };
@@ -217,7 +221,7 @@ async fn influx_last() -> impl IntoResponse {
     }
 }
 
-async fn combine_and_save_images(front: Option<Vec<u8>>, left: Option<Vec<u8>>, right: Option<Vec<u8>>, sys: i64, dia: i64, pulse: i64, temp_c: f64) -> Result<String> {
+async fn combine_and_save_images(front: Option<Vec<u8>>, left: Option<Vec<u8>>, right: Option<Vec<u8>>, neck: Option<Vec<u8>>, sys: i64, dia: i64, pulse: i64, temp_c: f64) -> Result<String> {
     let photos_dir = paths::PHOTOS_DIR;
     fs::create_dir_all(photos_dir).await?;
 
@@ -226,21 +230,35 @@ async fn combine_and_save_images(front: Option<Vec<u8>>, left: Option<Vec<u8>>, 
         Ok(img)
     }
 
-    let mut imgs: Vec<DynamicImage> = Vec::new();
-    if let Some(b) = front { imgs.push(decode_image(b).await?); }
-    if let Some(b) = left { imgs.push(decode_image(b).await?); }
-    if let Some(b) = right { imgs.push(decode_image(b).await?); }
+    let img_front = match front { Some(b) => Some(decode_image(b).await?), None => None };
+    let img_left = match left { Some(b) => Some(decode_image(b).await?), None => None };
+    let img_right = match right { Some(b) => Some(decode_image(b).await?), None => None };
+    let img_neck = match neck { Some(b) => Some(decode_image(b).await?), None => None };
 
-    if imgs.is_empty() {
+    if img_front.is_none() && img_left.is_none() && img_right.is_none() && img_neck.is_none() {
         return Err(anyhow::anyhow!("no images provided"));
     }
 
-    let height = imgs.iter().map(|i| i.height()).max().unwrap_or(0);
+    let height = [img_front.as_ref(), img_left.as_ref(), img_right.as_ref(), img_neck.as_ref()]
+        .iter()
+        .filter_map(|i| i.as_ref().map(|img| img.height()))
+        .max()
+        .unwrap_or(480);
+
+    fn blank_image(width: u32, height: u32) -> DynamicImage {
+        DynamicImage::ImageRgb8(image::RgbImage::from_pixel(width, height, image::Rgb([220,220,220])))
+    }
+
     let mut resized: Vec<DynamicImage> = Vec::new();
-    for img in imgs {
-        let w = ((img.width() as f32) * (height as f32) / (img.height() as f32)) as u32;
-        let r = img.resize_exact(w, height, image::imageops::FilterType::Triangle);
-        resized.push(r);
+    for img_opt in [&img_front, &img_left, &img_right, &img_neck] {
+        if let Some(img) = img_opt {
+            let w = ((img.width() as f32) * (height as f32) / (img.height() as f32)) as u32;
+            let r = img.resize_exact(w, height, image::imageops::FilterType::Triangle);
+            resized.push(r);
+        } else {
+            // Use a 4:3 blank placeholder if missing
+            resized.push(blank_image(height * 4 / 3, height));
+        }
     }
 
     let total_width: u32 = resized.iter().map(|i| i.width()).sum();

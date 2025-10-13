@@ -9,8 +9,8 @@
   // Thumbnails and hidden temporary canvas used for captures
   // note: thumbnail and button elements are queried later (after DOM ready) to avoid null refs
   const tempCanvas = document.createElement('canvas'); tempCanvas.width = 320; tempCanvas.height = 240; const tempCtx = tempCanvas.getContext('2d');
-  let captureStep = 0; // 0=front,1=left,2=right,3=done
-  let capturedBlobs = { front: null, left: null, right: null };
+  let captureStep = 0; // 0=front,1=left,2=right,3=neck,4=done
+  let capturedBlobs = { front: null, left: null, right: null, neck: null };
 
   function tsToDate(ts_nanos){ if(!ts_nanos) return null; return new Date(Math.floor(Number(ts_nanos)/1e6)); }
 
@@ -90,7 +90,7 @@
           const buckets = new Map();
           for(const it of items){
             const ms = toMs(it.timestamp_nanos);
-            const start = Math.floor(ms / WEEK) * WEEK; // simple epoch-based week bucket
+            const start = Math.floor(ms / WEEK) * WEEK;
             if(!buckets.has(start)) buckets.set(start, []);
             buckets.get(start).push(it);
           }
@@ -104,6 +104,51 @@
           return { labels: labels.map(fmt), sys: agg.map(x=>x.sys), dia: agg.map(x=>x.dia), pulse: agg.map(x=>x.pulse), temp_c: agg.map(x=>x.temp_c) };
         }
 
+        function groupDaily(items){
+          const DAY = 24*60*60*1000;
+          const buckets = new Map();
+          for(const it of items){
+            const ms = toMs(it.timestamp_nanos);
+            const start = Math.floor(ms / DAY) * DAY;
+            if (!buckets.has(start)) buckets.set(start, []);
+            buckets.get(start).push(it);
+          }
+          const keys = Array.from(buckets.keys()).sort((a,b)=> a-b);
+          const labels = keys.map(k=> new Date(k));
+          const agg = keys.map(k=>{
+            const arr = buckets.get(k);
+            const avg = (sel)=> arr.length? (arr.reduce((s,x)=> s + Number(sel(x)||0),0) / arr.length) : 0;
+            return { sys: avg(x=>x.sys), dia: avg(x=>x.dia), pulse: avg(x=>x.pulse), temp_c: avg(x=>x.temp_c) };
+          });
+          return { labels: labels.map(fmt), sys: agg.map(x=>x.sys), dia: agg.map(x=>x.dia), pulse: agg.map(x=>x.pulse), temp_c: agg.map(x=>x.temp_c) };
+        }
+
+        // Group by hour-of-day across all days (0..23)
+        function groupTimeOfDay(items){
+          const buckets = new Map();
+          for(let h=0; h<24; h++){ buckets.set(h, []); }
+          for(const it of items){
+            const ms = toMs(it.timestamp_nanos); if(!ms) continue;
+            const d = new Date(ms);
+            const h = d.getHours();
+            buckets.get(h).push(it);
+          }
+          const hours = [...Array(24).keys()];
+          const labels = hours.map(h=> h.toString().padStart(2,'0') + ':00');
+          const aggBy = sel => hours.map(h=>{
+            const arr = buckets.get(h);
+            if(!arr.length) return null;
+            return arr.reduce((s,x)=> s + Number(sel(x)||0),0) / arr.length;
+          });
+          return {
+            labels,
+            sys: aggBy(x=>x.sys),
+            dia: aggBy(x=>x.dia),
+            pulse: aggBy(x=>x.pulse),
+            temp_c: aggBy(x=>x.temp_c),
+          };
+        }
+
         // Base sorted ascending
         let asc = parsed.slice().sort((a,b)=> a.timestamp_nanos - b.timestamp_nanos);
         let labels, sysData, diaData, pulseData, tempData, extraDatasets = [];
@@ -115,6 +160,12 @@
           sysData = asc.map(x=>x.sys); diaData = asc.map(x=>x.dia); pulseData = asc.map(x=>x.pulse); tempData = asc.map(x=>x.temp_c);
         } else if(view === '7d_weekly'){
           const g = groupWeekly(asc);
+          labels = g.labels; sysData = g.sys; diaData = g.dia; pulseData = g.pulse; tempData = g.temp_c;
+        } else if(view === 'daily'){
+          const g = groupDaily(asc);
+          labels = g.labels; sysData = g.sys; diaData = g.dia; pulseData = g.pulse; tempData = g.temp_c;
+        } else if(view === 'tod'){
+          const g = groupTimeOfDay(asc);
           labels = g.labels; sysData = g.sys; diaData = g.dia; pulseData = g.pulse; tempData = g.temp_c;
         } else if(view === 'avg_compare'){
           labels = asc.map(x=> fmt(tsToDate(x.timestamp_nanos)));
@@ -242,19 +293,21 @@
   // Capture-cycle button behavior
   function updateCaptureButton(){
     const btn = document.getElementById('cap_cycle'); if(!btn) return;
-    if(captureStep===0) btn.textContent = 'Capture Front';
-    else if(captureStep===1) btn.textContent = 'Capture Left';
-    else if(captureStep===2) btn.textContent = 'Capture Right';
-    else btn.textContent = 'Submit Entry';
+  if(captureStep===0) btn.textContent = 'Capture Front';
+  else if(captureStep===1) btn.textContent = 'Capture Left';
+  else if(captureStep===2) btn.textContent = 'Capture Right';
+  else if(captureStep===3) btn.textContent = 'Capture Neck';
+  else btn.textContent = 'Submit Entry';
   }
 
   // Submit using captured blobs
   async function doSubmitWithCaptured(){
     const status = document.getElementById('status'); if(status) status.textContent = 'Uploading...';
     const fd = new FormData(); fd.append('sys', document.getElementById('sys').value || ''); fd.append('dia', document.getElementById('dia').value || ''); fd.append('pulse', document.getElementById('pulse').value || ''); fd.append('temp', document.getElementById('temp').value || '');
-    if(capturedBlobs.front) fd.append('photo_front', new File([capturedBlobs.front], 'front.png', { type:'image/png' }));
-    if(capturedBlobs.left) fd.append('photo_left', new File([capturedBlobs.left], 'left.png', { type:'image/png' }));
-    if(capturedBlobs.right) fd.append('photo_right', new File([capturedBlobs.right], 'right.png', { type:'image/png' }));
+  if(capturedBlobs.front) fd.append('photo_front', new File([capturedBlobs.front], 'front.png', { type:'image/png' }));
+  if(capturedBlobs.left) fd.append('photo_left', new File([capturedBlobs.left], 'left.png', { type:'image/png' }));
+  if(capturedBlobs.right) fd.append('photo_right', new File([capturedBlobs.right], 'right.png', { type:'image/png' }));
+  if(capturedBlobs.neck) fd.append('photo_neck', new File([capturedBlobs.neck], 'neck.png', { type:'image/png' }));
     try{
       const res = await fetch('/entry',{ method:'POST', body: fd });
       if(res.ok){
@@ -278,21 +331,21 @@
   async function combineCapturedAndSubmit(){
     const status = document.getElementById('status'); if(status) status.textContent = 'Uploading...';
     // ensure we have at least one captured image
-    if(!capturedBlobs.front && !capturedBlobs.left && !capturedBlobs.right){ if(status) status.textContent = 'No photos captured'; return; }
-    // create combined canvas (horizontal strip)
-    const w = 320, h = 240;
-    const canvas = document.createElement('canvas'); canvas.width = w * 3; canvas.height = h; const ctx = canvas.getContext('2d');
+  if(!capturedBlobs.front && !capturedBlobs.left && !capturedBlobs.right && !capturedBlobs.neck){ if(status) status.textContent = 'No photos captured'; return; }
+  // create combined canvas (horizontal strip)
+  const w = 320, h = 240;
+  const images = [capturedBlobs.front, capturedBlobs.left, capturedBlobs.right, capturedBlobs.neck].filter(Boolean);
+  const canvas = document.createElement('canvas'); canvas.width = w * images.length; canvas.height = h; const ctx = canvas.getContext('2d');
     // helper to draw blob into a slot
     async function drawBlobAt(blob, x){ if(!blob) return; const img = new Image(); const url = URL.createObjectURL(blob); await new Promise((res, rej)=>{ img.onload = ()=>{ ctx.drawImage(img, x, 0, w, h); URL.revokeObjectURL(url); res(); }; img.onerror = (e)=>{ URL.revokeObjectURL(url); res(); }; img.src = url; }); }
-    await drawBlobAt(capturedBlobs.front, 0);
-    await drawBlobAt(capturedBlobs.left, w);
-    await drawBlobAt(capturedBlobs.right, w*2);
+  let xoff = 0; for (const imgBlob of images){ await drawBlobAt(imgBlob, xoff); xoff += w; }
     const combinedBlob = await new Promise(res=> canvas.toBlob(res, 'image/png'));
 
     const fd = new FormData(); fd.append('sys', document.getElementById('sys').value || ''); fd.append('dia', document.getElementById('dia').value || ''); fd.append('pulse', document.getElementById('pulse').value || ''); fd.append('temp', document.getElementById('temp').value || '');
-    if(capturedBlobs.front) fd.append('photo_front', new File([capturedBlobs.front], 'front.png', { type:'image/png' }));
-    if(capturedBlobs.left) fd.append('photo_left', new File([capturedBlobs.left], 'left.png', { type:'image/png' }));
-    if(capturedBlobs.right) fd.append('photo_right', new File([capturedBlobs.right], 'right.png', { type:'image/png' }));
+  if(capturedBlobs.front) fd.append('photo_front', new File([capturedBlobs.front], 'front.png', { type:'image/png' }));
+  if(capturedBlobs.left) fd.append('photo_left', new File([capturedBlobs.left], 'left.png', { type:'image/png' }));
+  if(capturedBlobs.right) fd.append('photo_right', new File([capturedBlobs.right], 'right.png', { type:'image/png' }));
+  if(capturedBlobs.neck) fd.append('photo_neck', new File([capturedBlobs.neck], 'neck.png', { type:'image/png' }));
     if(combinedBlob) fd.append('photo_combined', new File([combinedBlob], 'combined.png', { type:'image/png' }));
 
     try{
@@ -301,7 +354,7 @@
         status && (status.textContent='Saved');
         try{ document.title = 'VITAL_OK_CLOSE'; }catch(_){ }
         
-        captureStep = 0; capturedBlobs = { front:null,left:null,right:null }; const statusEl = document.getElementById('cap_status'); if(statusEl) statusEl.textContent = '0 / 3 captured'; const btn = document.getElementById('cap_cycle'); if(btn) { btn.disabled = false; updateCaptureButton(); }
+  captureStep = 0; capturedBlobs = { front:null,left:null,right:null,neck:null }; const statusEl = document.getElementById('cap_status'); if(statusEl) statusEl.textContent = '0 / 4 captured'; const btn = document.getElementById('cap_cycle'); if(btn) { btn.disabled = false; updateCaptureButton(); }
 
         setTimeout(()=>{
           try{ if(window.close){ window.close(); } }catch(_){}
@@ -333,18 +386,19 @@
       const btn = document.getElementById('cap_cycle');
       if(btn){
         btn.addEventListener('click', async ()=>{
-          if(captureStep < 3){
+          if(captureStep < 4){
             if(video && (video.srcObject || video.readyState >= 2)){
               tempCanvas.width = 320; tempCanvas.height = 240; tempCtx.drawImage(video, 0, 0, tempCanvas.width, tempCanvas.height);
               const blob = await new Promise(res=> tempCanvas.toBlob(res, 'image/png'));
               if(captureStep===0) capturedBlobs.front = blob;
               else if(captureStep===1) capturedBlobs.left = blob;
               else if(captureStep===2) capturedBlobs.right = blob;
+              else if(captureStep===3) capturedBlobs.neck = blob;
               captureStep++;
 
-              const statusEl = document.getElementById('cap_status'); if(statusEl) statusEl.textContent = `${captureStep} / 3 captured`;
+              const statusEl = document.getElementById('cap_status'); if(statusEl) statusEl.textContent = `${captureStep} / 4 captured`;
               updateCaptureButton();
-              if(captureStep>=3){ btn.disabled = true; }
+              if(captureStep>=4){ btn.disabled = true; }
             } else {
               alert('Camera not available');
             }

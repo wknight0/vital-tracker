@@ -36,7 +36,7 @@
         <video id="video" autoplay playsinline></video>
         <div class="capture-controls">
           <button id="cap_cycle">Capture Front</button>
-          <div class="hint"><span id="cap_status">0 / 3 captured</span></div>
+          <div class="hint"><span id="cap_status">0 / 4 captured</span></div>
         </div>
       </div>
 
@@ -81,7 +81,7 @@
       <div id="view-graphs" class="view-section" style="display:none">
         <h1>Dashboard — Graphs</h1>
         <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
-          <label>View: <select id="graph_view_select"><option value="full">Full</option><option value="30d">Last 30 days</option><option value="7d_weekly">Weekly Avg</option><option value="avg_compare">Avg Compare</option></select></label>
+          <label>View: <select id="graph_view_select"><option value="full">Full</option><option value="30d">Last 30 days</option><option value="daily">Daily Avg</option><option value="7d_weekly">Weekly Avg</option><option value="tod">Time of Day Avg</option><option value="avg_compare">Avg Compare</option></select></label>
           <div class="graph-tabs" style="display:flex;gap:8px;">
             <button type="button" class="graph-tab" data-tab="bp">Blood Pressure</button>
             <button type="button" class="graph-tab" data-tab="pulse">Heart Rate</button>
@@ -101,7 +101,7 @@
       </div>
     </div>
 
-    <script src="/static/app.js"></script>
+  <script src="/static/app.js"></script>
     <script>
       document.addEventListener('DOMContentLoaded', ()=>{
         const links = document.querySelectorAll('nav a[data-view]');
