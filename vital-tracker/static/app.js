@@ -24,7 +24,17 @@
       const r = await fetch('/entries');
       if(!r.ok) throw new Error('HTTP '+r.status);
       const list = await r.json();
-  const parsed = list.map(e => ({ path: e.path, sys: Number(e.sys||0), dia: Number(e.dia||0), pulse: Number(e.pulse||0), temp_c: Number(e.temp_c||0), timestamp_nanos: Number(e.timestamp_nanos||0) }));
+  const parsed = list.map(e => ({
+    path: e.path,
+    sys: Number(e.sys||0),
+    dia: Number(e.dia||0),
+    pulse: Number(e.pulse||0),
+    temp_c: Number(e.temp_c||0),
+    // Preserve empties for older entries: null/undefined stay undefined
+    temp_jaw: (e.temp_jaw === null || e.temp_jaw === undefined) ? undefined : Number(e.temp_jaw),
+    pain: (e.pain === null || e.pain === undefined) ? undefined : Number(e.pain),
+    timestamp_nanos: Number(e.timestamp_nanos||0)
+  }));
       parsed.sort((a,b)=> b.timestamp_nanos - a.timestamp_nanos);
   // Cache for exports and other controls
   lastEntries = parsed.slice();
@@ -48,7 +58,7 @@
               return fname.replace(/\.jpg$/i,'');
             }catch(_){ return String(e.timestamp_nanos||''); }
           })();
-          tr.innerHTML = `<td>${date?date.toLocaleString():''}</td><td>${e.sys}</td><td>${e.dia}</td><td>${e.pulse}</td><td>${e.temp_c}</td><td><a target="_blank" href="${e.path}">photo</a></td><td><button class="del-btn" data-ts="${tsBase}">Delete</button></td>`;
+          tr.innerHTML = `<td>${date?date.toLocaleString():''}</td><td>${e.sys}</td><td>${e.dia}</td><td>${e.pulse}</td><td>${e.temp_c}</td><td>${e.temp_jaw??''}</td><td>${e.pain??''}</td><td><a target="_blank" href="${e.path}">photo</a></td><td><button class="del-btn" data-ts="${tsBase}">Delete</button></td>`;
           tbody.appendChild(tr);
         }
         // Attach delete handlers
@@ -99,9 +109,15 @@
           const agg = keys.map(k=>{
             const arr = buckets.get(k);
             const avg = (sel)=> arr.length? (arr.reduce((s,x)=> s + Number(sel(x)||0),0) / arr.length) : 0;
-            return { sys: avg(x=>x.sys), dia: avg(x=>x.dia), pulse: avg(x=>x.pulse), temp_c: avg(x=>x.temp_c) };
+            // Jaw temp average: ignore undefined/null and zero values (0 means not input)
+            const jawVals = arr.map(x=> x.temp_jaw).filter(v=> v!==undefined && v!==null && Number(v) !== 0).map(Number);
+            const jawAvg = jawVals.length? (jawVals.reduce((s,v)=> s+v, 0)/jawVals.length) : null;
+            // Pain average: ignore undefined/null
+            const painVals = arr.map(x=> x.pain).filter(v=> v!==undefined && v!==null).map(Number);
+            const painAvg = painVals.length? (painVals.reduce((s,v)=> s+v, 0)/painVals.length) : null;
+            return { sys: avg(x=>x.sys), dia: avg(x=>x.dia), pulse: avg(x=>x.pulse), temp_c: avg(x=>x.temp_c), temp_jaw: jawAvg, pain: painAvg };
           });
-          return { labels: labels.map(fmt), sys: agg.map(x=>x.sys), dia: agg.map(x=>x.dia), pulse: agg.map(x=>x.pulse), temp_c: agg.map(x=>x.temp_c) };
+          return { labels: labels.map(fmt), sys: agg.map(x=>x.sys), dia: agg.map(x=>x.dia), pulse: agg.map(x=>x.pulse), temp_c: agg.map(x=>x.temp_c), temp_jaw: agg.map(x=>x.temp_jaw), pain: agg.map(x=>x.pain) };
         }
 
         function groupDaily(items){
@@ -118,9 +134,14 @@
           const agg = keys.map(k=>{
             const arr = buckets.get(k);
             const avg = (sel)=> arr.length? (arr.reduce((s,x)=> s + Number(sel(x)||0),0) / arr.length) : 0;
-            return { sys: avg(x=>x.sys), dia: avg(x=>x.dia), pulse: avg(x=>x.pulse), temp_c: avg(x=>x.temp_c) };
+            // Jaw temp average: ignore undefined/null and zero values (0 means not input)
+            const jawVals = arr.map(x=> x.temp_jaw).filter(v=> v!==undefined && v!==null && Number(v) !== 0).map(Number);
+            const jawAvg = jawVals.length? (jawVals.reduce((s,v)=> s+v, 0)/jawVals.length) : null;
+            const painVals = arr.map(x=> x.pain).filter(v=> v!==undefined && v!==null).map(Number);
+            const painAvg = painVals.length? (painVals.reduce((s,v)=> s+v, 0)/painVals.length) : null;
+            return { sys: avg(x=>x.sys), dia: avg(x=>x.dia), pulse: avg(x=>x.pulse), temp_c: avg(x=>x.temp_c), temp_jaw: jawAvg, pain: painAvg };
           });
-          return { labels: labels.map(fmt), sys: agg.map(x=>x.sys), dia: agg.map(x=>x.dia), pulse: agg.map(x=>x.pulse), temp_c: agg.map(x=>x.temp_c) };
+          return { labels: labels.map(fmt), sys: agg.map(x=>x.sys), dia: agg.map(x=>x.dia), pulse: agg.map(x=>x.pulse), temp_c: agg.map(x=>x.temp_c), temp_jaw: agg.map(x=>x.temp_jaw), pain: agg.map(x=>x.pain) };
         }
 
         // Group by hour-of-day across all days (0..23)
@@ -140,18 +161,34 @@
             if(!arr.length) return null;
             return arr.reduce((s,x)=> s + Number(sel(x)||0),0) / arr.length;
           });
+          // Also compute jaw temp per hour
+          const jawByHour = hours.map(h=>{
+            const arr = buckets.get(h);
+            const vals = arr.map(x=> x.temp_jaw).filter(v=> v!==undefined && v!==null && Number(v) !== 0).map(Number);
+            if(!vals.length) return null;
+            return vals.reduce((s,v)=> s+v, 0) / vals.length;
+          });
+          // Pain per hour (ignore undefined/null)
+          const painByHour = hours.map(h=>{
+            const arr = buckets.get(h);
+            const vals = arr.map(x=> x.pain).filter(v=> v!==undefined && v!==null).map(Number);
+            if(!vals.length) return null;
+            return vals.reduce((s,v)=> s+v, 0) / vals.length;
+          });
           return {
             labels,
             sys: aggBy(x=>x.sys),
             dia: aggBy(x=>x.dia),
             pulse: aggBy(x=>x.pulse),
             temp_c: aggBy(x=>x.temp_c),
+            temp_jaw: jawByHour,
+            pain: painByHour,
           };
         }
 
         // Base sorted ascending
         let asc = parsed.slice().sort((a,b)=> a.timestamp_nanos - b.timestamp_nanos);
-        let labels, sysData, diaData, pulseData, tempData, extraDatasets = [];
+  let labels, sysData, diaData, pulseData, painData, tempData, extraDatasets = [];
 
         if(view === '30d'){
           const cutoff = Date.now() - 30*24*60*60*1000;
@@ -160,16 +197,16 @@
           sysData = asc.map(x=>x.sys); diaData = asc.map(x=>x.dia); pulseData = asc.map(x=>x.pulse); tempData = asc.map(x=>x.temp_c);
         } else if(view === '7d_weekly'){
           const g = groupWeekly(asc);
-          labels = g.labels; sysData = g.sys; diaData = g.dia; pulseData = g.pulse; tempData = g.temp_c;
+          labels = g.labels; sysData = g.sys; diaData = g.dia; pulseData = g.pulse; painData = g.pain; tempData = g.temp_c;
         } else if(view === 'daily'){
           const g = groupDaily(asc);
-          labels = g.labels; sysData = g.sys; diaData = g.dia; pulseData = g.pulse; tempData = g.temp_c;
+          labels = g.labels; sysData = g.sys; diaData = g.dia; pulseData = g.pulse; painData = g.pain; tempData = g.temp_c;
         } else if(view === 'tod'){
           const g = groupTimeOfDay(asc);
-          labels = g.labels; sysData = g.sys; diaData = g.dia; pulseData = g.pulse; tempData = g.temp_c;
+          labels = g.labels; sysData = g.sys; diaData = g.dia; pulseData = g.pulse; painData = g.pain; tempData = g.temp_c;
         } else if(view === 'avg_compare'){
           labels = asc.map(x=> fmt(tsToDate(x.timestamp_nanos)));
-          sysData = asc.map(x=>x.sys); diaData = asc.map(x=>x.dia); pulseData = asc.map(x=>x.pulse); tempData = asc.map(x=>x.temp_c);
+          sysData = asc.map(x=>x.sys); diaData = asc.map(x=>x.dia); pulseData = asc.map(x=>x.pulse); painData = asc.map(x=> (x.pain ?? null)); tempData = asc.map(x=>x.temp_c);
           const mean = arr => arr.length? (arr.reduce((s,v)=> s + Number(v||0),0)/arr.length):0;
           const sysAvg = mean(sysData), diaAvg = mean(diaData), pulseAvg = mean(pulseData), tempAvg = mean(tempData);
           const line = (v)=> labels.map(()=> v);
@@ -180,7 +217,7 @@
           // For pulse and temp charts we'll add their own avg lines separately
         } else {
           labels = asc.map(x=> fmt(tsToDate(x.timestamp_nanos)));
-          sysData = asc.map(x=>x.sys); diaData = asc.map(x=>x.dia); pulseData = asc.map(x=>x.pulse); tempData = asc.map(x=>x.temp_c);
+          sysData = asc.map(x=>x.sys); diaData = asc.map(x=>x.dia); pulseData = asc.map(x=>x.pulse); painData = asc.map(x=> (x.pain ?? null)); tempData = asc.map(x=>x.temp_c);
         }
 
         if(bpChart){ bpChart.destroy(); bpChart = null; }
@@ -196,18 +233,62 @@
         bpChart = new Chart(bpCtx, { type:'line', data:{ labels, datasets: bpDatasets }, options:{ responsive:true } });
 
         const pCtx = document.getElementById('pulseChart').getContext('2d');
-        let pulseDatasets = [ { label:'Pulse', data: pulseData, borderColor:'rgb(34,139,34)', fill:false } ];
+        let pulseDatasets = [ { label:'Pulse', data: pulseData, borderColor:'rgb(34,139,34)', yAxisID:'y', fill:false } ];
+        // Add Pain dataset if any values present
+        const hasPain = Array.isArray(painData) && painData.some(v=> v!=null);
+        if(hasPain){ pulseDatasets.push({ label:'Pain', data: painData, borderColor:'rgb(199,21,133)', yAxisID:'yPain', fill:false }); }
         if(view === 'avg_compare'){
-          const mean = arr => arr.length? (arr.reduce((s,v)=> s + Number(v||0),0)/arr.length):0;
-          pulseDatasets.push({ label:'Pulse avg', data: labels.map(()=> mean(pulseData)), borderColor:'rgba(34,139,34,.5)', borderDash:[6,4], fill:false });
+          const meanNonNull = arr => {
+            const vals = (arr||[]).filter(v=> v!=null).map(Number); return vals.length? (vals.reduce((s,v)=> s+v,0)/vals.length):0;
+          };
+          pulseDatasets.push({ label:'Pulse avg', data: labels.map(()=> meanNonNull(pulseData)), borderColor:'rgba(34,139,34,.5)', borderDash:[6,4], fill:false, yAxisID:'y' });
+          if(hasPain){ pulseDatasets.push({ label:'Pain avg', data: labels.map(()=> meanNonNull(painData)), borderColor:'rgba(199,21,133,.5)', borderDash:[6,4], fill:false, yAxisID:'yPain' }); }
         }
-        pulseChart = new Chart(pCtx, { type:'line', data:{ labels, datasets: pulseDatasets }, options:{ responsive:true } });
+        pulseChart = new Chart(pCtx, {
+          type:'line',
+          data:{ labels, datasets: pulseDatasets },
+          options:{
+            responsive:true,
+            interaction: { mode:'nearest', intersect:false },
+            scales: {
+              y: { type:'linear', position:'left' },
+              yPain: { type:'linear', position:'right', grid:{ drawOnChartArea:false }, suggestedMin:0, suggestedMax:10 }
+            }
+          }
+        });
 
         const tCtx = document.getElementById('tempChart').getContext('2d');
+        // Build Jaw temp series in all views when present
+        let jawSeries = null;
+        if(view === '7d_weekly' || view === 'daily' || view === 'tod'){
+          // In aggregated views, we need to recompute jaw temp alongside tempData
+          // Re-run the same grouping used above to produce jaw series
+          const makeAgg = () => {
+            if(view === '7d_weekly') return groupWeekly(asc);
+            if(view === 'daily') return groupDaily(asc);
+            if(view === 'tod') return groupTimeOfDay(asc);
+            return null;
+          };
+          const g = makeAgg();
+          if(g){ jawSeries = g.temp_jaw || null; }
+        } else {
+          // non-aggregated views: pull from raw entries
+          jawSeries = asc.map(x=> x.temp_jaw ?? null);
+        }
+
         let tempDatasets = [ { label:'Temp (C)', data: tempData, borderColor:'rgb(255,140,0)', fill:false } ];
+        if(jawSeries){ tempDatasets.push({ label:'Jaw Temp (C)', data: jawSeries, borderColor:'rgb(135,206,235)', fill:false }); }
         if(view === 'avg_compare'){
-          const mean = arr => arr.length? (arr.reduce((s,v)=> s + Number(v||0),0)/arr.length):0;
-          tempDatasets.push({ label:'Temp avg', data: labels.map(()=> mean(tempData)), borderColor:'rgba(255,140,0,.5)', borderDash:[6,4], fill:false });
+          const meanNum = arr => arr.length? (arr.reduce((s,v)=> s + Number(v||0),0)/arr.length):0;
+          tempDatasets.push({ label:'Temp avg', data: labels.map(()=> meanNum(tempData)), borderColor:'rgba(255,140,0,.5)', borderDash:[6,4], fill:false });
+          // Only add Jaw Temp avg if at least one non-null value exists
+          if(Array.isArray(jawSeries)){
+            const jawVals = jawSeries.filter(v=> v!=null);
+            if(jawVals.length){
+              const jawAvg = jawVals.reduce((s,v)=> s + Number(v), 0) / jawVals.length;
+              tempDatasets.push({ label:'Jaw Temp avg', data: labels.map(()=> jawAvg), borderColor:'rgba(135,206,235,.5)', borderDash:[6,4], fill:false });
+            }
+          }
         }
         tempChart = new Chart(tCtx, { type:'line', data:{ labels, datasets: tempDatasets }, options:{ responsive:true } });
       }
@@ -220,7 +301,21 @@
   }
 
   // CSV export
-  function exportCsv(arr, filename){ if(!arr || !arr.length){ alert('No data to export'); return; } const cols = ['timestamp_nanos','sys','dia','pulse','temp_c','path']; const header = cols.join(','); const lines = arr.map(r=> cols.map(c=>{ let v = r[c]===undefined? '': r[c]; if(typeof v === 'string') v = '"'+String(v).replace(/"/g,'""')+'"'; return v; }).join(',')); const csv = [header].concat(lines).join('\n'); const blob = new Blob([csv], { type:'text/csv' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = filename || 'export.csv'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url); }
+  function exportCsv(arr, filename){
+    if(!arr || !arr.length){ alert('No data to export'); return; }
+  const cols = ['timestamp_nanos','sys','dia','pulse','temp_c','temp_jaw','pain','path'];
+    const header = cols.join(',');
+    const lines = arr.map(r=> cols.map(c=>{
+      let v = r[c];
+      if(v === undefined || v === null) v = '';
+      if(typeof v === 'string') v = '"'+String(v).replace(/"/g,'""')+'"';
+      return v;
+    }).join(','));
+    const csv = [header].concat(lines).join('\n');
+    const blob = new Blob([csv], { type:'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = filename || 'export.csv'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  }
 
   // Bind controls that may be injected later (table controls, header sorting, refresh)
   function bindControls(){
@@ -264,7 +359,7 @@
       tabs.forEach(t=> t.classList.toggle('active', t.getAttribute('data-tab')===tab));
     }
     tabs.forEach(t=> t.addEventListener('click', ()=> showTab(t.getAttribute('data-tab'))));
-    if(tabs.length){ showTab('bp'); }
+  if(tabs.length){ showTab('bp'); }
 
     // Dashboard nav fallback (legacy pages)
     document.getElementById('view_graphs')?.addEventListener('click', ()=> location.href='/static/dashboard/graphs.html');
@@ -290,7 +385,7 @@
 
   function captureTo(ctx){ if(!ctx) return; if(!video || !video.srcObject){ ctx.fillStyle='#ddd'; ctx.fillRect(0,0,ctx.canvas.width, ctx.canvas.height); ctx.fillStyle='#000'; ctx.fillText('No camera',10,20); return; } ctx.drawImage(video,0,0,ctx.canvas.width, ctx.canvas.height); }
 
-  // Capture-cycle button behavior
+            // (removed stray duplicate row generation)
   function updateCaptureButton(){
     const btn = document.getElementById('cap_cycle'); if(!btn) return;
   if(captureStep===0) btn.textContent = 'Capture Front';
@@ -303,7 +398,7 @@
   // Submit using captured blobs
   async function doSubmitWithCaptured(){
     const status = document.getElementById('status'); if(status) status.textContent = 'Uploading...';
-    const fd = new FormData(); fd.append('sys', document.getElementById('sys').value || ''); fd.append('dia', document.getElementById('dia').value || ''); fd.append('pulse', document.getElementById('pulse').value || ''); fd.append('temp', document.getElementById('temp').value || '');
+  const fd = new FormData(); fd.append('sys', document.getElementById('sys').value || ''); fd.append('dia', document.getElementById('dia').value || ''); fd.append('pulse', document.getElementById('pulse').value || ''); fd.append('temp', document.getElementById('temp').value || ''); fd.append('temp_jaw', document.getElementById('temp_jaw')?.value || ''); fd.append('pain', document.getElementById('pain')?.value || '');
   if(capturedBlobs.front) fd.append('photo_front', new File([capturedBlobs.front], 'front.png', { type:'image/png' }));
   if(capturedBlobs.left) fd.append('photo_left', new File([capturedBlobs.left], 'left.png', { type:'image/png' }));
   if(capturedBlobs.right) fd.append('photo_right', new File([capturedBlobs.right], 'right.png', { type:'image/png' }));
@@ -341,7 +436,7 @@
   let xoff = 0; for (const imgBlob of images){ await drawBlobAt(imgBlob, xoff); xoff += w; }
     const combinedBlob = await new Promise(res=> canvas.toBlob(res, 'image/png'));
 
-    const fd = new FormData(); fd.append('sys', document.getElementById('sys').value || ''); fd.append('dia', document.getElementById('dia').value || ''); fd.append('pulse', document.getElementById('pulse').value || ''); fd.append('temp', document.getElementById('temp').value || '');
+  const fd = new FormData(); fd.append('sys', document.getElementById('sys').value || ''); fd.append('dia', document.getElementById('dia').value || ''); fd.append('pulse', document.getElementById('pulse').value || ''); fd.append('temp', document.getElementById('temp').value || ''); fd.append('temp_jaw', document.getElementById('temp_jaw')?.value || ''); fd.append('pain', document.getElementById('pain')?.value || '');
   if(capturedBlobs.front) fd.append('photo_front', new File([capturedBlobs.front], 'front.png', { type:'image/png' }));
   if(capturedBlobs.left) fd.append('photo_left', new File([capturedBlobs.left], 'left.png', { type:'image/png' }));
   if(capturedBlobs.right) fd.append('photo_right', new File([capturedBlobs.right], 'right.png', { type:'image/png' }));

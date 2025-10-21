@@ -6,9 +6,13 @@ VITAL_WIDTH  := 1000
 VITAL_HEIGHT := 760
 
 F9::{
-    url := "http://127.0.0.1:8081/"
+    url := "http://localhost:8081/"
+    profile := "Default"  ; Use your profile name if needed (e.g., "Profile 1").
+    userDataDir := EnvGet("LOCALAPPDATA") "\\VitalTrackerBrowserProfile"
 
-    ; Prefer Microsoft Edge app mode if available, fallback to Chrome if present
+    ; Optional: force a specific browser ("edge", "chrome", or "auto")
+    prefer := "auto"
+
     pf64 := A_ProgramFiles
     pf86 := EnvGet("ProgramFiles(x86)")
 
@@ -18,14 +22,29 @@ F9::{
     chrome32 := pf86 ? pf86 "\\Google\\Chrome\\Application\\chrome.exe" : ""
 
     cmd := ""
-    if (FileExist(edge64)) {
-        cmd := '"' edge64 '" --app="' url '" --window-size=' VITAL_WIDTH ',' VITAL_HEIGHT
-    } else if (FileExist(edge32)) {
-        cmd := '"' edge32 '" --app="' url '" --window-size=' VITAL_WIDTH ',' VITAL_HEIGHT
-    } else if (FileExist(chrome64)) {
-        cmd := '"' chrome64 '" --app="' url '" --window-size=' VITAL_WIDTH ',' VITAL_HEIGHT
-    } else if (FileExist(chrome32)) {
-        cmd := '"' chrome32 '" --app="' url '" --window-size=' VITAL_WIDTH ',' VITAL_HEIGHT
+    if (prefer = "edge") {
+        if (FileExist(edge64)) {
+            cmd := '"' edge64 '" --app="' url '" --user-data-dir="' userDataDir '" --profile-directory="' profile '" --window-size=' VITAL_WIDTH ',' VITAL_HEIGHT ' --no-first-run --no-default-browser-check'
+        } else if (FileExist(edge32)) {
+            cmd := '"' edge32 '" --app="' url '" --user-data-dir="' userDataDir '" --profile-directory="' profile '" --window-size=' VITAL_WIDTH ',' VITAL_HEIGHT ' --no-first-run --no-default-browser-check'
+        }
+    } else if (prefer = "chrome") {
+        if (FileExist(chrome64)) {
+            cmd := '"' chrome64 '" --app="' url '" --user-data-dir="' userDataDir '" --profile-directory="' profile '" --window-size=' VITAL_WIDTH ',' VITAL_HEIGHT ' --no-first-run --no-default-browser-check'
+        } else if (FileExist(chrome32)) {
+            cmd := '"' chrome32 '" --app="' url '" --user-data-dir="' userDataDir '" --profile-directory="' profile '" --window-size=' VITAL_WIDTH ',' VITAL_HEIGHT ' --no-first-run --no-default-browser-check'
+        }
+    }
+    if (cmd = "") {
+        if (FileExist(edge64)) {
+            cmd := '"' edge64 '" --app="' url '" --user-data-dir="' userDataDir '" --profile-directory="' profile '" --window-size=' VITAL_WIDTH ',' VITAL_HEIGHT ' --no-first-run --no-default-browser-check'
+        } else if (FileExist(edge32)) {
+            cmd := '"' edge32 '" --app="' url '" --user-data-dir="' userDataDir '" --profile-directory="' profile '" --window-size=' VITAL_WIDTH ',' VITAL_HEIGHT ' --no-first-run --no-default-browser-check'
+        } else if (FileExist(chrome64)) {
+            cmd := '"' chrome64 '" --app="' url '" --user-data-dir="' userDataDir '" --profile-directory="' profile '" --window-size=' VITAL_WIDTH ',' VITAL_HEIGHT ' --no-first-run --no-default-browser-check'
+        } else if (FileExist(chrome32)) {
+            cmd := '"' chrome32 '" --app="' url '" --user-data-dir="' userDataDir '" --profile-directory="' profile '" --window-size=' VITAL_WIDTH ',' VITAL_HEIGHT ' --no-first-run --no-default-browser-check'
+        }
     }
 
     if (cmd != "") {

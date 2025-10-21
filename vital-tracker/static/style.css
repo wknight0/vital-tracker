@@ -104,11 +104,27 @@ footer{ color: var(--muted); border-top:1px solid var(--border); background: var
 
 /* Quick Entry layout */
 #quick .inputs-grid{
-    display:grid;
-    grid-template-columns: repeat(2, minmax(220px, 1fr));
-    gap:12px 20px;
-    margin:10px auto 18px;
-    max-width:700px;
+        display:grid;
+        grid-template-columns: repeat(3, minmax(200px, 1fr));
+        gap:12px 20px;
+        margin:10px auto 18px;
+        max-width:900px;
+}
+/* Explicit 3x2 placement: Row1: SYS, DIA, Pulse; Row2: Temp, Jaw Temp, Pain */
+#quick .inputs-grid > label:nth-child(1){ grid-column:1; grid-row:1; }
+#quick .inputs-grid > label:nth-child(2){ grid-column:2; grid-row:1; }
+#quick .inputs-grid > label:nth-child(3){ grid-column:3; grid-row:1; }
+#quick .inputs-grid > label:nth-child(4){ grid-column:1; grid-row:2; }
+#quick .inputs-grid > label:nth-child(5){ grid-column:2; grid-row:2; }
+#quick .inputs-grid > label:nth-child(6){ grid-column:3; grid-row:2; }
+
+@media (max-width: 800px){
+    #quick .inputs-grid{
+        grid-template-columns: repeat(2, minmax(180px, 1fr));
+        max-width:700px;
+    }
+    /* Let items flow naturally on smaller screens */
+    #quick .inputs-grid > label{ grid-column:auto; grid-row:auto; }
 }
 #quick .inputs-grid label{
     display:flex;
@@ -117,6 +133,9 @@ footer{ color: var(--muted); border-top:1px solid var(--border); background: var
     font-weight:600;
 }
 #quick .inputs-grid input[type="number"]{ width:100%; }
+
+/* Center text inside number inputs for a cleaner look, esp. SYS/DIA */
+#quick .inputs-grid input[type="number"]{ text-align:center; }
 
 #quick .media{
     display:flex;
