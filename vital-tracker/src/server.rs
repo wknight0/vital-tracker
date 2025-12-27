@@ -16,7 +16,7 @@ static INFLUX_DISABLED_RUNTIME: AtomicBool = AtomicBool::new(false);
 static INFLUX_LOGGED_ONCE: AtomicBool = AtomicBool::new(false);
 
 #[derive(Serialize, Deserialize)]
-struct Entry { path: String, sys: i64, dia: i64, pulse: i64, temp_c: f64, temp_jaw: Option<f64>, #[serde(alias = "pain_hr")] pain: Option<i64>, timestamp_nanos: i128 }
+struct Entry { path: String, sys: i64, dia: i64, pulse: i64, temp_c: f64, temp_jaw: Option<f64>, temp_room: Option<f64>, #[serde(alias = "pain_hr")] pain: Option<i64>, timestamp_nanos: i128 }
 
 pub async fn run_server() -> Result<()> {
     let photos_service = get_service(ServeDir::new(paths::PHOTOS_DIR)).handle_error(|err: std::io::Error| async move {
@@ -64,6 +64,7 @@ async fn handle_entry(mut multipart: Multipart) -> impl IntoResponse {
     let mut right: Option<Vec<u8>> = None;
     let mut neck: Option<Vec<u8>> = None;
     let mut temp_jaw: Option<f64> = None;
+    let mut temp_room: Option<f64> = None;
     let mut pain: Option<i64> = None;
 
     while let Some(field) = multipart.next_field().await.unwrap_or(None) {
@@ -106,6 +107,11 @@ async fn handle_entry(mut multipart: Multipart) -> impl IntoResponse {
                     temp_jaw = text.parse().ok();
                 }
             }
+            "temp_room" => {
+                if let Ok(text) = field.text().await {
+                    temp_room = text.parse().ok();
+                }
+            }
             "pain" | "pain_hr" => {
                 if let Ok(text) = field.text().await {
                     pain = text.parse().ok();
@@ -119,7 +125,7 @@ async fn handle_entry(mut multipart: Multipart) -> impl IntoResponse {
         return (StatusCode::BAD_REQUEST, "Missing numeric fields".to_string());
     }
 
-    let combined_path = match combine_and_save_images(front, left, right, neck, sys.unwrap(), dia.unwrap(), pulse.unwrap(), temp.unwrap(), temp_jaw, pain).await {
+    let combined_path = match combine_and_save_images(front, left, right, neck, sys.unwrap(), dia.unwrap(), pulse.unwrap(), temp.unwrap(), temp_jaw, temp_room, pain).await {
         Ok(p) => p,
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("image error: {}", e)),
     };
@@ -180,17 +186,17 @@ async fn list_entries() -> impl IntoResponse {
                                     // fallback: return minimal entry
                                     let rel = format!("/photos/{}", fname);
                                     if let Ok(ts) = base.parse::<i128>() {
-                                        out.push(Entry { path: rel, sys:0, dia:0, pulse:0, temp_c:0.0, temp_jaw: None, pain: None, timestamp_nanos: ts });
+                                        out.push(Entry { path: rel, sys:0, dia:0, pulse:0, temp_c:0.0, temp_jaw: None, temp_room: None, pain: None, timestamp_nanos: ts });
                                     } else {
-                                        out.push(Entry { path: rel, sys:0, dia:0, pulse:0, temp_c:0.0, temp_jaw: None, pain: None, timestamp_nanos:0 });
+                                        out.push(Entry { path: rel, sys:0, dia:0, pulse:0, temp_c:0.0, temp_jaw: None, temp_room: None, pain: None, timestamp_nanos:0 });
                                     }
                                 }
                             } else {
                                 let rel = format!("/photos/{}", fname);
                                 if let Ok(ts) = base.parse::<i128>() {
-                                    out.push(Entry { path: rel, sys:0, dia:0, pulse:0, temp_c:0.0, temp_jaw: None, pain: None, timestamp_nanos: ts });
+                                    out.push(Entry { path: rel, sys:0, dia:0, pulse:0, temp_c:0.0, temp_jaw: None, temp_room: None, pain: None, timestamp_nanos: ts });
                                 } else {
-                                    out.push(Entry { path: rel, sys:0, dia:0, pulse:0, temp_c:0.0, temp_jaw: None, pain: None, timestamp_nanos:0 });
+                                    out.push(Entry { path: rel, sys:0, dia:0, pulse:0, temp_c:0.0, temp_jaw: None, temp_room: None, pain: None, timestamp_nanos:0 });
                                 }
                             }
                         }
@@ -233,7 +239,7 @@ async fn influx_last() -> impl IntoResponse {
     }
 }
 
-async fn combine_and_save_images(front: Option<Vec<u8>>, left: Option<Vec<u8>>, right: Option<Vec<u8>>, neck: Option<Vec<u8>>, sys: i64, dia: i64, pulse: i64, temp_c: f64, temp_jaw: Option<f64>, pain: Option<i64>) -> Result<String> {
+async fn combine_and_save_images(front: Option<Vec<u8>>, left: Option<Vec<u8>>, right: Option<Vec<u8>>, neck: Option<Vec<u8>>, sys: i64, dia: i64, pulse: i64, temp_c: f64, temp_jaw: Option<f64>, temp_room: Option<f64>, pain: Option<i64>) -> Result<String> {
     let photos_dir = paths::PHOTOS_DIR;
     fs::create_dir_all(photos_dir).await?;
 
@@ -294,7 +300,7 @@ async fn combine_and_save_images(front: Option<Vec<u8>>, left: Option<Vec<u8>>, 
     imgbuf.save(&out_path)?;
 
     // Write metadata JSON under data/json (new layout)
-    let meta = Entry { path: format!("/photos/{}", filename), sys: sys, dia: dia, pulse: pulse, temp_c: temp_c, temp_jaw: temp_jaw, pain: pain, timestamp_nanos: timestamp };
+    let meta = Entry { path: format!("/photos/{}", filename), sys: sys, dia: dia, pulse: pulse, temp_c: temp_c, temp_jaw: temp_jaw, temp_room: temp_room, pain: pain, timestamp_nanos: timestamp };
     let meta_path = paths::json_meta_path(&timestamp.to_string());
     let meta_json = serde_json::to_string(&meta)?;
     fs::write(&meta_path, meta_json).await?;

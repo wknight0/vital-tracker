@@ -32,6 +32,7 @@
     temp_c: Number(e.temp_c||0),
     // Preserve empties for older entries: null/undefined stay undefined
     temp_jaw: (e.temp_jaw === null || e.temp_jaw === undefined) ? undefined : Number(e.temp_jaw),
+    temp_room: (e.temp_room === null || e.temp_room === undefined) ? undefined : Number(e.temp_room),
     pain: (e.pain === null || e.pain === undefined) ? undefined : Number(e.pain),
     timestamp_nanos: Number(e.timestamp_nanos||0)
   }));
@@ -58,7 +59,7 @@
               return fname.replace(/\.jpg$/i,'');
             }catch(_){ return String(e.timestamp_nanos||''); }
           })();
-          tr.innerHTML = `<td>${date?date.toLocaleString():''}</td><td>${e.sys}</td><td>${e.dia}</td><td>${e.pulse}</td><td>${e.temp_c}</td><td>${e.temp_jaw??''}</td><td>${e.pain??''}</td><td><a target="_blank" href="${e.path}">photo</a></td><td><button class="del-btn" data-ts="${tsBase}">Delete</button></td>`;
+          tr.innerHTML = `<td>${date?date.toLocaleString():''}</td><td>${e.sys}</td><td>${e.dia}</td><td>${e.pulse}</td><td>${e.temp_c}</td><td>${e.temp_jaw??''}</td><td>${e.temp_room??''}</td><td>${e.pain??''}</td><td><a target="_blank" href="${e.path}">photo</a></td><td><button class="del-btn" data-ts="${tsBase}">Delete</button></td>`;
           tbody.appendChild(tr);
         }
         // Attach delete handlers
@@ -111,13 +112,15 @@
             const avg = (sel)=> arr.length? (arr.reduce((s,x)=> s + Number(sel(x)||0),0) / arr.length) : 0;
             // Jaw temp average: ignore undefined/null and zero values (0 means not input)
             const jawVals = arr.map(x=> x.temp_jaw).filter(v=> v!==undefined && v!==null && Number(v) !== 0).map(Number);
+            const roomVals = arr.map(x=> x.temp_room).filter(v=> v!==undefined && v!==null && Number(v) !== 0).map(Number);
             const jawAvg = jawVals.length? (jawVals.reduce((s,v)=> s+v, 0)/jawVals.length) : null;
+            const roomAvg = roomVals.length? (roomVals.reduce((s,v)=> s+v, 0)/roomVals.length) : null;
             // Pain average: ignore undefined/null
             const painVals = arr.map(x=> x.pain).filter(v=> v!==undefined && v!==null).map(Number);
             const painAvg = painVals.length? (painVals.reduce((s,v)=> s+v, 0)/painVals.length) : null;
-            return { sys: avg(x=>x.sys), dia: avg(x=>x.dia), pulse: avg(x=>x.pulse), temp_c: avg(x=>x.temp_c), temp_jaw: jawAvg, pain: painAvg };
+            return { sys: avg(x=>x.sys), dia: avg(x=>x.dia), pulse: avg(x=>x.pulse), temp_c: avg(x=>x.temp_c), temp_jaw: jawAvg, temp_room: roomAvg, pain: painAvg };
           });
-          return { labels: labels.map(fmt), sys: agg.map(x=>x.sys), dia: agg.map(x=>x.dia), pulse: agg.map(x=>x.pulse), temp_c: agg.map(x=>x.temp_c), temp_jaw: agg.map(x=>x.temp_jaw), pain: agg.map(x=>x.pain) };
+          return { labels: labels.map(fmt), sys: agg.map(x=>x.sys), dia: agg.map(x=>x.dia), pulse: agg.map(x=>x.pulse), temp_c: agg.map(x=>x.temp_c), temp_jaw: agg.map(x=>x.temp_jaw), temp_room: agg.map(x=>x.temp_room), pain: agg.map(x=>x.pain) };
         }
 
         function groupDaily(items){
@@ -136,12 +139,14 @@
             const avg = (sel)=> arr.length? (arr.reduce((s,x)=> s + Number(sel(x)||0),0) / arr.length) : 0;
             // Jaw temp average: ignore undefined/null and zero values (0 means not input)
             const jawVals = arr.map(x=> x.temp_jaw).filter(v=> v!==undefined && v!==null && Number(v) !== 0).map(Number);
+            const roomVals = arr.map(x=> x.temp_room).filter(v=> v!==undefined && v!==null && Number(v) !== 0).map(Number);
             const jawAvg = jawVals.length? (jawVals.reduce((s,v)=> s+v, 0)/jawVals.length) : null;
+            const roomAvg = roomVals.length? (roomVals.reduce((s,v)=> s+v, 0)/roomVals.length) : null;
             const painVals = arr.map(x=> x.pain).filter(v=> v!==undefined && v!==null).map(Number);
             const painAvg = painVals.length? (painVals.reduce((s,v)=> s+v, 0)/painVals.length) : null;
-            return { sys: avg(x=>x.sys), dia: avg(x=>x.dia), pulse: avg(x=>x.pulse), temp_c: avg(x=>x.temp_c), temp_jaw: jawAvg, pain: painAvg };
+            return { sys: avg(x=>x.sys), dia: avg(x=>x.dia), pulse: avg(x=>x.pulse), temp_c: avg(x=>x.temp_c), temp_jaw: jawAvg, temp_room: roomAvg, pain: painAvg };
           });
-          return { labels: labels.map(fmt), sys: agg.map(x=>x.sys), dia: agg.map(x=>x.dia), pulse: agg.map(x=>x.pulse), temp_c: agg.map(x=>x.temp_c), temp_jaw: agg.map(x=>x.temp_jaw), pain: agg.map(x=>x.pain) };
+          return { labels: labels.map(fmt), sys: agg.map(x=>x.sys), dia: agg.map(x=>x.dia), pulse: agg.map(x=>x.pulse), temp_c: agg.map(x=>x.temp_c), temp_jaw: agg.map(x=>x.temp_jaw), temp_room: agg.map(x=>x.temp_room), pain: agg.map(x=>x.pain) };
         }
 
         // Group by hour-of-day across all days (0..23)
@@ -168,6 +173,13 @@
             if(!vals.length) return null;
             return vals.reduce((s,v)=> s+v, 0) / vals.length;
           });
+          // Room temp per hour
+          const roomByHour = hours.map(h=>{
+            const arr = buckets.get(h);
+            const vals = arr.map(x=> x.temp_room).filter(v=> v!==undefined && v!==null && Number(v) !== 0).map(Number);
+            if(!vals.length) return null;
+            return vals.reduce((s,v)=> s+v, 0) / vals.length;
+          });
           // Pain per hour (ignore undefined/null)
           const painByHour = hours.map(h=>{
             const arr = buckets.get(h);
@@ -182,6 +194,7 @@
             pulse: aggBy(x=>x.pulse),
             temp_c: aggBy(x=>x.temp_c),
             temp_jaw: jawByHour,
+            temp_room: roomByHour,
             pain: painByHour,
           };
         }
@@ -230,7 +243,19 @@
           { label:'DIA', data: diaData, borderColor:'rgb(30,144,255)', fill:false },
           ...extraDatasets
         ];
-        bpChart = new Chart(bpCtx, { type:'line', data:{ labels, datasets: bpDatasets }, options:{ responsive:true } });
+        bpChart = new Chart(bpCtx, {
+          type:'line',
+          data:{ labels, datasets: bpDatasets },
+          options:{
+            responsive:true,
+            plugins:{
+              zoom:{
+                zoom:{ wheel:{ enabled:true }, pinch:{ enabled:true }, mode:'x', drag:{ enabled:true, borderColor:'rgba(0,0,0,.3)', backgroundColor:'rgba(0,0,0,.08)' } },
+                pan:{ enabled:true, mode:'x' }
+              }
+            }
+          }
+        });
 
         const pCtx = document.getElementById('pulseChart').getContext('2d');
         let pulseDatasets = [ { label:'Pulse', data: pulseData, borderColor:'rgb(34,139,34)', yAxisID:'y', fill:false } ];
@@ -253,13 +278,20 @@
             scales: {
               y: { type:'linear', position:'left' },
               yPain: { type:'linear', position:'right', grid:{ drawOnChartArea:false }, suggestedMin:0, suggestedMax:10 }
+            },
+            plugins:{
+              zoom:{
+                zoom:{ wheel:{ enabled:true }, pinch:{ enabled:true }, mode:'x', drag:{ enabled:true, borderColor:'rgba(0,0,0,.3)', backgroundColor:'rgba(0,0,0,.08)' } },
+                pan:{ enabled:true, mode:'x' }
+              }
             }
           }
         });
 
         const tCtx = document.getElementById('tempChart').getContext('2d');
-        // Build Jaw temp series in all views when present
+        // Build Jaw/Room temp series in all views when present
         let jawSeries = null;
+        let roomSeries = null;
         if(view === '7d_weekly' || view === 'daily' || view === 'tod'){
           // In aggregated views, we need to recompute jaw temp alongside tempData
           // Re-run the same grouping used above to produce jaw series
@@ -270,14 +302,16 @@
             return null;
           };
           const g = makeAgg();
-          if(g){ jawSeries = g.temp_jaw || null; }
+          if(g){ jawSeries = g.temp_jaw || null; roomSeries = g.temp_room || null; }
         } else {
           // non-aggregated views: pull from raw entries
           jawSeries = asc.map(x=> x.temp_jaw ?? null);
+          roomSeries = asc.map(x=> x.temp_room ?? null);
         }
 
         let tempDatasets = [ { label:'Temp (C)', data: tempData, borderColor:'rgb(255,140,0)', fill:false } ];
         if(jawSeries){ tempDatasets.push({ label:'Jaw Temp (C)', data: jawSeries, borderColor:'rgb(135,206,235)', fill:false }); }
+        if(roomSeries){ tempDatasets.push({ label:'Room Temp (C)', data: roomSeries, borderColor:'rgba(255, 0, 157, 1)', fill:false }); }
         if(view === 'avg_compare'){
           const meanNum = arr => arr.length? (arr.reduce((s,v)=> s + Number(v||0),0)/arr.length):0;
           tempDatasets.push({ label:'Temp avg', data: labels.map(()=> meanNum(tempData)), borderColor:'rgba(255,140,0,.5)', borderDash:[6,4], fill:false });
@@ -289,8 +323,28 @@
               tempDatasets.push({ label:'Jaw Temp avg', data: labels.map(()=> jawAvg), borderColor:'rgba(135,206,235,.5)', borderDash:[6,4], fill:false });
             }
           }
+          // Room Temp avg
+          if(Array.isArray(roomSeries)){
+            const roomVals = roomSeries.filter(v=> v!=null);
+            if(roomVals.length){
+              const roomAvg = roomVals.reduce((s,v)=> s + Number(v), 0) / roomVals.length;
+              tempDatasets.push({ label:'Room Temp avg', data: labels.map(()=> roomAvg), borderColor:'rgba(255, 0, 170, 0.5)', borderDash:[6,4], fill:false });
+            }
+          }
         }
-        tempChart = new Chart(tCtx, { type:'line', data:{ labels, datasets: tempDatasets }, options:{ responsive:true } });
+        tempChart = new Chart(tCtx, {
+          type:'line',
+          data:{ labels, datasets: tempDatasets },
+          options:{
+            responsive:true,
+            plugins:{
+              zoom:{
+                zoom:{ wheel:{ enabled:true }, pinch:{ enabled:true }, mode:'x', drag:{ enabled:true, borderColor:'rgba(0,0,0,.3)', backgroundColor:'rgba(0,0,0,.08)' } },
+                pan:{ enabled:true, mode:'x' }
+              }
+            }
+          }
+        });
       }
 
     } catch(err){
@@ -303,7 +357,7 @@
   // CSV export
   function exportCsv(arr, filename){
     if(!arr || !arr.length){ alert('No data to export'); return; }
-  const cols = ['timestamp_nanos','sys','dia','pulse','temp_c','temp_jaw','pain','path'];
+  const cols = ['timestamp_nanos','sys','dia','pulse','temp_c','temp_jaw','temp_room','pain','path'];
     const header = cols.join(',');
     const lines = arr.map(r=> cols.map(c=>{
       let v = r[c];
@@ -345,6 +399,8 @@
     // Graph view select (may be injected) - attach here so it works after injection
     const graphSelect = document.getElementById('graph_view_select');
     if(graphSelect) graphSelect.addEventListener('change', ()=> loadEntries());
+
+    // Reset Zoom control removed
 
     // Graph tabs - show one chart at a time
     const tabs = document.querySelectorAll('.graph-tab');
@@ -398,7 +454,7 @@
   // Submit using captured blobs
   async function doSubmitWithCaptured(){
     const status = document.getElementById('status'); if(status) status.textContent = 'Uploading...';
-  const fd = new FormData(); fd.append('sys', document.getElementById('sys').value || ''); fd.append('dia', document.getElementById('dia').value || ''); fd.append('pulse', document.getElementById('pulse').value || ''); fd.append('temp', document.getElementById('temp').value || ''); fd.append('temp_jaw', document.getElementById('temp_jaw')?.value || ''); fd.append('pain', document.getElementById('pain')?.value || '');
+  const fd = new FormData(); fd.append('sys', document.getElementById('sys').value || ''); fd.append('dia', document.getElementById('dia').value || ''); fd.append('pulse', document.getElementById('pulse').value || ''); fd.append('temp', document.getElementById('temp').value || ''); fd.append('temp_jaw', document.getElementById('temp_jaw')?.value || ''); fd.append('temp_room', document.getElementById('temp_room')?.value || ''); fd.append('pain', document.getElementById('pain')?.value || '');
   if(capturedBlobs.front) fd.append('photo_front', new File([capturedBlobs.front], 'front.png', { type:'image/png' }));
   if(capturedBlobs.left) fd.append('photo_left', new File([capturedBlobs.left], 'left.png', { type:'image/png' }));
   if(capturedBlobs.right) fd.append('photo_right', new File([capturedBlobs.right], 'right.png', { type:'image/png' }));
@@ -436,7 +492,7 @@
   let xoff = 0; for (const imgBlob of images){ await drawBlobAt(imgBlob, xoff); xoff += w; }
     const combinedBlob = await new Promise(res=> canvas.toBlob(res, 'image/png'));
 
-  const fd = new FormData(); fd.append('sys', document.getElementById('sys').value || ''); fd.append('dia', document.getElementById('dia').value || ''); fd.append('pulse', document.getElementById('pulse').value || ''); fd.append('temp', document.getElementById('temp').value || ''); fd.append('temp_jaw', document.getElementById('temp_jaw')?.value || ''); fd.append('pain', document.getElementById('pain')?.value || '');
+  const fd = new FormData(); fd.append('sys', document.getElementById('sys').value || ''); fd.append('dia', document.getElementById('dia').value || ''); fd.append('pulse', document.getElementById('pulse').value || ''); fd.append('temp', document.getElementById('temp').value || ''); fd.append('temp_jaw', document.getElementById('temp_jaw')?.value || ''); fd.append('temp_room', document.getElementById('temp_room')?.value || ''); fd.append('pain', document.getElementById('pain')?.value || '');
   if(capturedBlobs.front) fd.append('photo_front', new File([capturedBlobs.front], 'front.png', { type:'image/png' }));
   if(capturedBlobs.left) fd.append('photo_left', new File([capturedBlobs.left], 'left.png', { type:'image/png' }));
   if(capturedBlobs.right) fd.append('photo_right', new File([capturedBlobs.right], 'right.png', { type:'image/png' }));
